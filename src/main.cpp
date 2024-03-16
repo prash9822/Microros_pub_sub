@@ -31,8 +31,6 @@
 #define en 4
 byte read=0;
 
-//prashant
-
 // declaring motor pwm variables (these are used for sending pwm signals to motor driver)
 int FL_motor;
 int FR_motor;
@@ -43,7 +41,7 @@ float x ;
 float y ;
 float z ;
 
-// declaring pins for motor driver (Arduinno Due)
+// declaring pins for motor driver (Arduino_Due)
 #define mPinFL 9
 #define mPinFR 10
 #define mPinBL 8
@@ -55,16 +53,17 @@ float z ;
 
 rcl_publisher_t publisher;
 std_msgs__msg__Int32 lsa08;
+sensor_msgs__msg__Imu imu_msg;
 
 rcl_subscription_t subscriber;
 geometry_msgs__msg__Twist sub_msg;
-sensor_msgs__msg__Imu imu_msg;
 
 rclc_executor_t executor;
 rclc_support_t support;
 rcl_allocator_t allocator;
 rcl_node_t node;
 rcl_timer_t timer;
+
 Adafruit_MPU6050 mpu;
 
 #define RCCHECK(fn) { rcl_ret_t temp_rc = fn; if((temp_rc != RCL_RET_OK)){error_loop();}}
@@ -93,12 +92,22 @@ void error_loop() {
 
 void timer_callback(rcl_timer_t * timer, int64_t last_call_time) {
   RCLC_UNUSED(last_call_time);
-
+     
+     digitalWrite(en,LOW);
+      while(Serial.available()<=0);
+      read=Serial.read();
+      Serial.println(read);
+      lsa08.data=read;
       
-      if (timer != NULL) {
+      if (timer != NULL){
 
-     RCSOFTCHECK(rcl_publish(&publisher, &lsa08, NULL));
-     RCSOFTCHECK(rcl_publish(&publisher, &imu_msg, NULL));
+       RCSOFTCHECK(rcl_publish(&publisher, &lsa08, NULL));
+
+  }
+}
+
+void timer_callback_imu(rcl_timer_t * timer, int64_t last_call_time) {
+  RCLC_UNUSED(last_call_time);
 
     sensors_event_t a, g, temp;
     mpu.getEvent(&a, &g, &temp);
@@ -107,13 +116,16 @@ void timer_callback(rcl_timer_t * timer, int64_t last_call_time) {
     imu_msg.linear_acceleration.y = a.acceleration.y;
     imu_msg.linear_acceleration.z = a.acceleration.z;
 
-    imu_msg.angular_velocity.x = a.gyro.x;
-    imu_msg.angular_velocity.y = a.gyro.y;
-    imu_msg.angular_velocity.z = a.gyro.z;
+    imu_msg.angular_velocity.x = g.gyro.x;
+    imu_msg.angular_velocity.y = g.gyro.y;
+    imu_msg.angular_velocity.z = g.gyro.z;
+    
+      if (timer != NULL) {
+     
+     RCSOFTCHECK(rcl_publish(&publisher, &imu_msg, NULL));
 
   }
 }
-
 void subscription_callback(const void *msgin) {
   const geometry_msgs__msg__Twist * msg = (const geometry_msgs__msg__Twist *)msgin;
   
@@ -131,7 +143,7 @@ void setup() {
   set_microros_serial_transports(Serial);
   delay(2000);
 
-  // Try to initialize!
+  //Try to initialize!
   if (!mpu.begin()) {
     Serial.println("Failed to find MPU6050 chip");
     while (1) {
@@ -156,6 +168,7 @@ void setup() {
     "line_lsa"));
 
   // creating publisher for imu_sensor data
+
     RCCHECK(rclc_publisher_init_default(
     &publisher,
     &node,
@@ -177,31 +190,28 @@ void setup() {
     RCL_MS_TO_NS(timer_timeout),
     timer_callback));
 
+  // create timer for mpu6050,
+  const unsigned int timer_timeout_imu = 500;
+  RCCHECK(rclc_timer_init_default(
+    &timer,
+    &support,
+    RCL_MS_TO_NS(timer_timeout_imu),
+    timer_callback_imu));
+
   // create executor
-  RCCHECK(rclc_executor_init(&executor, &support.context, 2, &allocator));
+  RCCHECK(rclc_executor_init(&executor, &support.context, 3, &allocator));
   RCCHECK(rclc_executor_add_timer(&executor, &timer));
   RCCHECK(rclc_executor_add_subscription(&executor, &subscriber, &sub_msg, &subscription_callback, ON_NEW_DATA));
 
-  //setupt motion detection
-  mpu.setHighPassFilter(MPU6050_HIGHPASS_0_63_HZ);
-  mpu.setMotionDetectionThreshold(1);
-  mpu.setMotionDetectionDuration(20);
-  mpu.setInterruptPinLatch(true);	
-  mpu.setInterruptPinPolarity(true);
-  mpu.setMotionInterrupt(true);
+  mpu.setAccelerometerRange(MPU6050_RANGE_8_G);
+  mpu.setGyroRange(MPU6050_RANGE_250_DEG);
+  mpu.setFilterBandwidth(MPU6050_BAND_44_HZ);
 
+  delay(100);
   
 }
 
 void loop() {
-
-      digitalWrite(en,LOW);
-      while(Serial.available()<=0);
-      read=Serial.read();
-      Serial.println(read);
-      lsa08.data=read;
-      
-  
 
   float mapped_leftHatx = map(x,0,10,0,255);
   float mapped_leftHaty = map(y,0,10,0,255);
