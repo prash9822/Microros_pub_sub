@@ -13,14 +13,11 @@
 /*****************************************************************************************************************************************/
 #include <Arduino.h>
 #include <micro_ros_platformio.h>
-#include <Wire.h>
-#include <Adafruit_MPU6050.h>
-#include <Adafruit_Sensor.h>
-
 
 #include <rcl/rcl.h>
 #include <rclc/rclc.h>
 #include <rclc/executor.h>
+
 
 #include <geometry_msgs/msg/twist.h>
 #include <std_msgs/msg/int32.h>
@@ -28,6 +25,10 @@
 
 #if !defined(MICRO_ROS_TRANSPORT_ARDUINO_SERIAL)
 #endif
+
+#include <Wire.h>
+#include <Adafruit_MPU6050.h>
+#include <Adafruit_Sensor.h>
 
 #define en 4
 byte read=0;
@@ -37,10 +38,6 @@ int FL_motor;
 int FR_motor;
 int BL_motor;
 int BR_motor;
-
-float x ;
-float y ;
-float z ;
 
 // declaring pins for motor driver (Arduino_Due)
 #define mPinFL 9
@@ -98,13 +95,14 @@ void error_loop() {
 void timer_callback(rcl_timer_t * timer, int64_t last_call_time) {
   RCLC_UNUSED(last_call_time);
      
-     digitalWrite(en,LOW);
+      Serial1.begin(115200);
+      digitalWrite(en,LOW);
       while(Serial1.available()<=0);
       read=Serial1.read();
       // Serial.println(read);
       lsa08.data=read;
       digitalWrite(en,HIGH);
-      if (timer != NULL){
+      if (timer!= NULL){
 
        RCSOFTCHECK(rcl_publish(&publisher_line, &lsa08, NULL));
       
@@ -113,6 +111,16 @@ void timer_callback(rcl_timer_t * timer, int64_t last_call_time) {
 void timer_callback_imu(rcl_timer_t * timer, int64_t last_call_time) {
 
     RCLC_UNUSED(last_call_time);
+
+  //   if (mpu.begin()) {
+  //   // Serial.println("Failed to find MPU6050 chip");
+  //   while (1) {
+  //     delay(10);
+  //   }
+  // }
+     
+     mpu.begin();
+    
     sensors_event_t a, g, temp;
     mpu.getEvent(&a, &g, &temp);
 
@@ -134,13 +142,13 @@ void timer_callback_imu(rcl_timer_t * timer, int64_t last_call_time) {
 void subscription_callback(const void *msgin) {
   const geometry_msgs__msg__Twist * msg = (const geometry_msgs__msg__Twist *)msgin;
   
-   x = msg->linear.x;
-   y = msg->linear.y;
-   z = msg->angular.z;
+   float x1 = msg->linear.x;
+   float y1 = msg->linear.y;
+   float z1 = msg->angular.z;
 
-  float mapped_leftHatx = map(x,0,2,0,100);
-  float mapped_leftHaty = map(y,0,2,0,100);
-  float mapped_rightHatz = map(z,0,1,0,50);
+  float mapped_leftHatx = map(x1,0,5,0,100);
+  float mapped_leftHaty = map(y1,0,5,0,100);
+  float mapped_rightHatz = map(z1,0,5,0,50);
 
     FL_motor = mapped_leftHatx - mapped_rightHatz + mapped_leftHaty;
     BR_motor = mapped_leftHatx + mapped_rightHatz + mapped_leftHaty;
@@ -215,20 +223,16 @@ void setup() {
    
   pinSetup();
   // Configure serial transport
-  Serial.begin(115200);
-  Serial1.begin(115200);
+ 
   
   set_microros_serial_transports(Serial);
   delay(2000);
-
+  
+  Serial.begin(115200);
+  
  // Try to initialize!
 
-  if (!mpu.begin()) {
-    Serial.println("Failed to find MPU6050 chip");
-    while (1) {
-      delay(10);
-    }
-  }
+
   // Serial.println("MPU6050 Found!");
 
   allocator = rcl_get_default_allocator();
@@ -261,7 +265,7 @@ void setup() {
     ROSIDL_GET_MSG_TYPE_SUPPORT(geometry_msgs, msg, Twist),
     "cmd_vel"));
 
-  // create timer,
+  // create timer for LSA08,
   const unsigned int timer_timeout = 100;
   RCCHECK(rclc_timer_init_default(
     &timer_line,
@@ -280,14 +284,14 @@ void setup() {
   // create executor
   RCCHECK(rclc_executor_init(&executor, &support.context, 3, &allocator));
   RCCHECK(rclc_executor_add_timer(&executor, &timer_line));
-   RCCHECK(rclc_executor_add_timer(&executor, &timer_imu));
+  RCCHECK(rclc_executor_add_timer(&executor, &timer_imu));
   RCCHECK(rclc_executor_add_subscription(&executor, &subscriber, &sub_msg, &subscription_callback, ON_NEW_DATA));
 
   mpu.setAccelerometerRange(MPU6050_RANGE_8_G);
   mpu.setGyroRange(MPU6050_RANGE_250_DEG);
   mpu.setFilterBandwidth(MPU6050_BAND_44_HZ);
 
-  delay(100);
+ delay(100);
   
 }
 
