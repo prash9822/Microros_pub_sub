@@ -13,6 +13,7 @@
 #include <rcl/error_handling.h>
 #include <geometry_msgs/msg/twist.h>
 #include <std_msgs/msg/int32.h>
+#include <std_msgs/msg/int8.h>
 #include <sensor_msgs/msg/imu.h>
 #include <std_msgs/msg/int32_multi_array.h> 
 #include <std_srvs/srv/set_bool.h>
@@ -23,6 +24,8 @@
 #endif
 
 #define en 4
+const int jPulse = 2;
+int nodeCount = 0;
 byte read=0;
 
 // declaring motor pwm variables (these are used for sending pwm signals to motor driver)
@@ -41,19 +44,21 @@ int BR_motor;
 #define dirBL 27
 #define dirBR 33
 
-#define pwmPin1 21
-#define dir1 22
-#define pwmPin2 2
-#define dir2 3
-#define pwmPin3 23
-#define dir3 25
-#define pwmPin4 13
-#define dir4 3
+#define pwmPin1 13
+#define dir1 3
+// #define pwmPin2 10
+// #define dir2 31
+// #define pwmPin3 8
+// #define dir3 27
+// #define pwmPin4 11
+// #define dir4 33
 
 rcl_publisher_t publisher_imu;
 rcl_publisher_t publisher_line;
 rcl_publisher_t publisher_luna;
+rcl_publisher_t publisher_junction;
 
+std_msgs__msg__Int8 junc;
 std_msgs__msg__Int32 lsa08; 
 std_msgs__msg__Int32MultiArray msg_lsa08;        
 sensor_msgs__msg__Imu imu_msg;
@@ -70,6 +75,7 @@ rcl_node_t node;
 rcl_timer_t timer_line;
 rcl_timer_t timer_imu;
 rcl_timer_t timer_luna;
+rcl_timer_t timer_junc;
 
 rcl_service_t service;
 rcl_wait_set_t wait_set;
@@ -82,9 +88,16 @@ Adafruit_MPU6050 mpu;
 #define RCCHECK(fn) { rcl_ret_t temp_rc = fn; if((temp_rc != RCL_RET_OK)){error_loop();}}
 #define RCSOFTCHECK(fn) { rcl_ret_t temp_rc = fn; if((temp_rc != RCL_RET_OK)){}}
 
+void pulse_detected()
+{
+  nodeCount++;
+}
+
 void pinSetup()
 {
   pinMode(en,OUTPUT);
+  pinMode(jPulse, INPUT_PULLUP);
+  attachInterrupt(digitalPinToInterrupt(jPulse), pulse_detected, RISING);
   pinMode(mPinFL, OUTPUT);
   pinMode(mPinFR, OUTPUT);
   pinMode(mPinBL, OUTPUT);
@@ -97,15 +110,14 @@ void pinSetup()
 
   pinMode(dir1, OUTPUT);
   pinMode(pwmPin1, OUTPUT);
-  pinMode(dir2, OUTPUT);
-  pinMode(pwmPin2, OUTPUT);
-  pinMode(dir3, OUTPUT);
-  pinMode(pwmPin3, OUTPUT);
-  pinMode(dir4, OUTPUT);
-  pinMode(pwmPin4, OUTPUT);
+  // pinMode(dir2, OUTPUT);
+  // pinMode(pwmPin2, OUTPUT);
+  // pinMode(dir3, OUTPUT);
+  // pinMode(pwmPin3, OUTPUT);
+  // pinMode(dir4, OUTPUT);
+  // pinMode(pwmPin4, OUTPUT);
 
 }
-
 // Error handle loop
 void error_loop() {
   while(1) {
@@ -115,39 +127,51 @@ void error_loop() {
 void rotate_clockwise(bool &success)
 {
   digitalWrite(dir1, HIGH);
-  digitalWrite(dir2, HIGH);
-  digitalWrite(dir3, HIGH);
-  digitalWrite(dir4, HIGH);
+  // digitalWrite(dir2, HIGH);
+  // digitalWrite(dir3, HIGH);
+  // digitalWrite(dir4, HIGH);
   analogWrite(pwmPin1, 255);
-  analogWrite(pwmPin2, 255);
-  analogWrite(pwmPin3, 255);
-  analogWrite(pwmPin4, 255);
+  // analogWrite(pwmPin2, 255);
+  // analogWrite(pwmPin3, 255);
+  // analogWrite(pwmPin4, 255);
   delay(3000);
   analogWrite(pwmPin1, 0);
-  analogWrite(pwmPin2, 0);
-  analogWrite(pwmPin3, 0);
-  analogWrite(pwmPin4, 0);
+  // analogWrite(pwmPin2, 0);
+  // analogWrite(pwmPin3, 0);
+  // analogWrite(pwmPin4, 0);
   success = true;
 }
 
 void rotate_anticlockwise(bool &success)
 {
   digitalWrite(dir1, LOW);
-  digitalWrite(dir2, LOW);
-  digitalWrite(dir3, LOW);
-  digitalWrite(dir4, LOW);
+  // digitalWrite(dir2, LOW);
+  // digitalWrite(dir3, LOW);
+  // digitalWrite(dir4, LOW);
   analogWrite(pwmPin1, 255);
-  analogWrite(pwmPin2, 255);
-  analogWrite(pwmPin3, 255);
-  analogWrite(pwmPin4, 255);
+  // analogWrite(pwmPin2, 255);
+  // analogWrite(pwmPin3, 255);
+  // analogWrite(pwmPin4, 255);
   delay(3000);
   analogWrite(pwmPin1, 0);
-  analogWrite(pwmPin2, 0);
-  analogWrite(pwmPin3, 0);
-  analogWrite(pwmPin4, 0);
+  // analogWrite(pwmPin2, 0);
+  // analogWrite(pwmPin3, 0);
+  // analogWrite(pwmPin4, 0);
   success = true;
 }
 
+void timer_callback_junc(rcl_timer_t * timer, int64_t last_call_time)
+{
+      RCLC_UNUSED(last_call_time);
+
+      junc.data=nodeCount;
+
+      if (timer!= NULL){
+
+       RCSOFTCHECK(rcl_publish(&publisher_junction, &junc, NULL));
+      
+  }
+}
 void timer_callback(rcl_timer_t * timer, int64_t last_call_time) {
   RCLC_UNUSED(last_call_time);
      
@@ -170,13 +194,13 @@ void timer_callback_imu(rcl_timer_t * timer, int64_t last_call_time) {
     RCLC_UNUSED(last_call_time);
 
   //   if (!mpu.begin()) {
-  //   // Serial.println("Failed to find MPU6050 chip");
+   
   //   while (1) {
   //     delay(10);
   //   }
   // }
      
-     mpu.begin();
+    mpu.begin();
     
     sensors_event_t a, g, temp;
     mpu.getEvent(&a, &g, &temp);
@@ -228,9 +252,9 @@ void subscription_callback(const void *msgin) {
    float y1 = msg->linear.y;
    float z1 = msg->angular.z;
 
-  float mapped_leftHatx =  (100.0/2.0)*x1;
-  float mapped_leftHaty = (100.0/2.0)* y1;
-  float mapped_rightHatz = (50.0/2.0)* z1;
+  float mapped_leftHatx =  (127.0/2.0)*x1;
+  float mapped_leftHaty = (127.0/2.0)* y1;
+  float mapped_rightHatz = (95.0/2.0)* z1;
 
     FL_motor = mapped_leftHatx - mapped_rightHatz + mapped_leftHaty;
     BR_motor = mapped_leftHatx + mapped_rightHatz + mapped_leftHaty;
@@ -356,10 +380,16 @@ void setup() {
     &node, 
     ROSIDL_GET_SRV_TYPE_SUPPORT(std_srvs, srv, SetBool), 
     "/setbool"));
-
+  
+  // create publisher for junction
+    RCCHECK(rclc_publisher_init_default(
+    &publisher_junction,
+    &node,
+    ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Int8),
+    "Junction_count"));
 
   // create publisher lsa08 data
-  RCCHECK(rclc_publisher_init_default(
+    RCCHECK(rclc_publisher_init_default(
     &publisher_line,
     &node,
     ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Int32),
@@ -388,7 +418,7 @@ void setup() {
     ROSIDL_GET_MSG_TYPE_SUPPORT(geometry_msgs, msg, Twist),
     "cmd_vel"));
 
-    //create timer for lunar sensor
+  //create timer for lunar sensor
 
     const unsigned int timer_timeout_luna = 500;
     RCCHECK(rclc_timer_init_default(
@@ -397,9 +427,17 @@ void setup() {
     RCL_MS_TO_NS(timer_timeout_luna),
     timer_callback_multiarray));
 
+  // create timmer for junction
+    const unsigned int timer_timeout_junc= 100;
+    RCCHECK(rclc_timer_init_default(
+    &timer_junc,
+    &support,
+    RCL_MS_TO_NS(timer_timeout_junc),
+    timer_callback_junc));
+
   // create timer for LSA08,
-  const unsigned int timer_timeout = 100;
-  RCCHECK(rclc_timer_init_default(
+    const unsigned int timer_timeout = 100;
+    RCCHECK(rclc_timer_init_default(
     &timer_line,
     &support,
     RCL_MS_TO_NS(timer_timeout),
@@ -415,18 +453,19 @@ void setup() {
 
   // create executor
   
-  RCCHECK(rclc_executor_init(&executor, &support.context, 5, &allocator));
+  RCCHECK(rclc_executor_init(&executor, &support.context, 6, &allocator));
   RCCHECK(rclc_executor_add_timer(&executor, &timer_line));
   RCCHECK(rclc_executor_add_timer(&executor, &timer_imu));
+  RCCHECK(rclc_executor_add_timer(&executor, &timer_junc));
+  RCCHECK(rclc_executor_add_timer(&executor, &timer_luna));
+
   RCCHECK(rclc_executor_add_subscription(&executor, &subscriber, &sub_msg, &subscription_callback, ON_NEW_DATA));
+
   RCCHECK(rclc_executor_add_service(&executor, &service, &req, &res, service_callback));
 
-  RCCHECK(rclc_executor_add_timer(&executor, &timer_luna));
-  
-
-  mpu.setAccelerometerRange(MPU6050_RANGE_8_G);
+  mpu.setAccelerometerRange(MPU6050_RANGE_16_G);
   mpu.setGyroRange(MPU6050_RANGE_250_DEG);
-  mpu.setFilterBandwidth(MPU6050_BAND_44_HZ);
+  mpu.setFilterBandwidth(MPU6050_BAND_21_HZ);
 
  delay(100);
   
