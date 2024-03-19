@@ -1,16 +1,3 @@
-/****************************---------------------AUTONOMOUS_ROBOT_2--------------------************************************************\
-
-                                           *             *
-                                    FL    * * * * * * * * *  FR
-                                         *  *           *  *
-                                            *           *
-                                            *    R2     *
-                                            *           *
-                                         *  *           *  *
-                                    BL    * * * * * * * * *   BR
-                                           *             *
-                                            
-/*****************************************************************************************************************************************/
 #include <Arduino.h>
 #include <micro_ros_platformio.h>
 #include <Wire.h>
@@ -27,7 +14,9 @@
 #include <geometry_msgs/msg/twist.h>
 #include <std_msgs/msg/int32.h>
 #include <sensor_msgs/msg/imu.h>
+#include <std_msgs/msg/int32_multi_array.h> 
 #include <std_srvs/srv/set_bool.h>
+
 
 
 #if !defined(MICRO_ROS_TRANSPORT_ARDUINO_SERIAL)
@@ -59,16 +48,17 @@ int BR_motor;
 #define pwmPin3 23
 #define dir3 25
 #define pwmPin4 13
-#define dir4 31
-
+#define dir4 3
 
 rcl_publisher_t publisher_imu;
 rcl_publisher_t publisher_line;
+rcl_publisher_t publisher_luna;
 
-std_msgs__msg__Int32 lsa08;
+std_msgs__msg__Int32 lsa08; 
+std_msgs__msg__Int32MultiArray msg_lsa08;        
 sensor_msgs__msg__Imu imu_msg;
 
-rcl_subscription_t subscriber;
+rcl_subscription_t subscriber;       
 geometry_msgs__msg__Twist sub_msg;
 
 rclc_executor_t executor;
@@ -76,15 +66,16 @@ rclc_support_t support;
 rcl_allocator_t allocator;
 rcl_node_t node;
 
+
 rcl_timer_t timer_line;
 rcl_timer_t timer_imu;
+rcl_timer_t timer_luna;
 
 rcl_service_t service;
 rcl_wait_set_t wait_set;
 
 std_srvs__srv__SetBool_Response req;
 std_srvs__srv__SetBool_Response res;
-
 
 Adafruit_MPU6050 mpu;
 
@@ -103,7 +94,7 @@ void pinSetup()
   pinMode(dirFR, OUTPUT);
   pinMode(dirBL, OUTPUT);
   pinMode(dirBR, OUTPUT);
-  
+
   pinMode(dir1, OUTPUT);
   pinMode(pwmPin1, OUTPUT);
   pinMode(dir2, OUTPUT);
@@ -121,7 +112,6 @@ void error_loop() {
     delay(100);
   }
 }
-
 void rotate_clockwise(bool &success)
 {
   digitalWrite(dir1, HIGH);
@@ -174,11 +164,12 @@ void timer_callback(rcl_timer_t * timer, int64_t last_call_time) {
       
   }
 }
+
 void timer_callback_imu(rcl_timer_t * timer, int64_t last_call_time) {
 
     RCLC_UNUSED(last_call_time);
 
-  //   if (mpu.begin()) {
+  //   if (!mpu.begin()) {
   //   // Serial.println("Failed to find MPU6050 chip");
   //   while (1) {
   //     delay(10);
@@ -205,35 +196,29 @@ void timer_callback_imu(rcl_timer_t * timer, int64_t last_call_time) {
   }
 }
 
-void service_callback(const void * req, void * res){
-  
-  
-  std_srvs__srv__SetBool_Request * req_in=(std_srvs__srv__SetBool_Request *) req;
-  std_srvs__srv__SetBool_Response * res_in=(std_srvs__srv__SetBool_Response *) res;
+void timer_callback_multiarray(rcl_timer_t * timer, int64_t last_call_time)
+{  
+  RCLC_UNUSED(last_call_time);
 
-  //printf("Service request value: %d + %d.\n", (int) req_in->a, (int) req_in->b);
-//  String response_str = "f1";
-  bool success = false;
-
-  if(req_in->data == 1)
-  {
-//    res_in->success = true;
-//    res_in->message = response_str;
-
-      rotate_clockwise(success);
-      res_in->success = success;
+   // Clear previous data
+   msg_lsa08.data.size = 0;
+   msg_lsa08.data.capacity = 0;
+   msg_lsa08.data.data = NULL;
     
+    // Add new data
+    msg_lsa08.data.data = (int32_t*)malloc(sizeof(int32_t) * 3); // Assuming you want to publish 3 values
+    if  (msg_lsa08.data.data != NULL) {
+     msg_lsa08.data.size = 3;
+     msg_lsa08.data.capacity = 3;
+     msg_lsa08.data.data[0] = 1; // Example value
+     msg_lsa08.data.data[1] = 2; // Example value
+     msg_lsa08.data.data[2] = 3; // Example value
+
+  if (timer != NULL) {
+      // Publish the message
+      RCSOFTCHECK(rcl_publish(&publisher_luna, &msg_lsa08, NULL));
+    }
   }
-
-  else
-  {
-//    res_in->success = true;
-//    res_in->message = "f0";
-
-      rotate_anticlockwise(success);
-      res_in->success = success;
-  }
-
 }
 
 void subscription_callback(const void *msgin) {
@@ -243,9 +228,9 @@ void subscription_callback(const void *msgin) {
    float y1 = msg->linear.y;
    float z1 = msg->angular.z;
 
-  float mapped_leftHatx = map(x1,0,5,0,100);
-  float mapped_leftHaty = map(y1,0,5,0,100);
-  float mapped_rightHatz = map(z1,0,5,0,50);
+  float mapped_leftHatx =  (100.0/2.0)*x1;
+  float mapped_leftHaty = (100.0/2.0)* y1;
+  float mapped_rightHatz = (50.0/2.0)* z1;
 
     FL_motor = mapped_leftHatx - mapped_rightHatz + mapped_leftHaty;
     BR_motor = mapped_leftHatx + mapped_rightHatz + mapped_leftHaty;
@@ -313,7 +298,36 @@ void subscription_callback(const void *msgin) {
     analogWrite(mPinBL,BL_motor);
     analogWrite(mPinBR,BR_motor);
 
+}
+void service_callback(const void * req, void * res){
   
+  
+  std_srvs__srv__SetBool_Request * req_in=(std_srvs__srv__SetBool_Request *) req;
+  std_srvs__srv__SetBool_Response * res_in=(std_srvs__srv__SetBool_Response *) res;
+
+  //printf("Service request value: %d + %d.\n", (int) req_in->a, (int) req_in->b);
+//  String response_str = "f1";
+  bool success = false;
+
+  if(req_in->data == 1)
+  {
+//    res_in->success = true;
+//    res_in->message = response_str;
+
+      rotate_clockwise(success);
+      res_in->success = success;
+    
+  }
+
+  else
+  {
+//    res_in->success = true;
+//    res_in->message = "f0";
+
+      rotate_anticlockwise(success);
+      res_in->success = success;
+  }
+
 }
 
 void setup() {
@@ -321,27 +335,23 @@ void setup() {
   pinSetup();
   // Configure serial transport
  
-  
   set_microros_serial_transports(Serial);
-  delay(2000);
+  delay(1000);
   
   Serial.begin(115200);
   
  // Try to initialize!
-
-
-  // Serial.println("MPU6050 Found!");
 
   allocator = rcl_get_default_allocator();
 
   //create init_options
   RCCHECK(rclc_support_init(&support, 0, NULL, &allocator));
 
-  // create node
+  // create node 
   RCCHECK(rclc_node_init_default(&node, "r2_vrc", "", &support));
 
-  // create service
-  RCCHECK(rclc_service_init_default(
+    // create service
+   RCCHECK(rclc_service_init_default(
     &service, 
     &node, 
     ROSIDL_GET_SRV_TYPE_SUPPORT(std_srvs, srv, SetBool), 
@@ -355,20 +365,37 @@ void setup() {
     ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Int32),
     "line_lsa"));
 
-  // creating publisher for imu_sensor data
+ // creating publisher for imu_sensor data
 
     RCCHECK(rclc_publisher_init_default(
     &publisher_imu,
     &node,
     ROSIDL_GET_MSG_TYPE_SUPPORT(sensor_msgs, msg, Imu),
     "imu_info_topic"));
+  
+  //create publisher for lunar sensor
 
-  // subscriber
+    RCCHECK(rclc_publisher_init_default(
+    &publisher_luna,
+    &node,
+    ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Int32MultiArray),
+    "luna_data"));
+
+  // subscriber for cmd vel
     RCCHECK(rclc_subscription_init_default(
     &subscriber,
     &node,
     ROSIDL_GET_MSG_TYPE_SUPPORT(geometry_msgs, msg, Twist),
     "cmd_vel"));
+
+    //create timer for lunar sensor
+
+    const unsigned int timer_timeout_luna = 500;
+    RCCHECK(rclc_timer_init_default(
+    &timer_luna,
+    &support,
+    RCL_MS_TO_NS(timer_timeout_luna),
+    timer_callback_multiarray));
 
   // create timer for LSA08,
   const unsigned int timer_timeout = 100;
@@ -387,11 +414,15 @@ void setup() {
     timer_callback_imu));
 
   // create executor
-  RCCHECK(rclc_executor_init(&executor, &support.context, 3, &allocator));
+  
+  RCCHECK(rclc_executor_init(&executor, &support.context, 5, &allocator));
   RCCHECK(rclc_executor_add_timer(&executor, &timer_line));
   RCCHECK(rclc_executor_add_timer(&executor, &timer_imu));
   RCCHECK(rclc_executor_add_subscription(&executor, &subscriber, &sub_msg, &subscription_callback, ON_NEW_DATA));
   RCCHECK(rclc_executor_add_service(&executor, &service, &req, &res, service_callback));
+
+  RCCHECK(rclc_executor_add_timer(&executor, &timer_luna));
+  
 
   mpu.setAccelerometerRange(MPU6050_RANGE_8_G);
   mpu.setGyroRange(MPU6050_RANGE_250_DEG);
@@ -404,6 +435,7 @@ void setup() {
 void loop() {
 
   delay(100);
+
   RCSOFTCHECK(rclc_executor_spin_some(&executor, RCL_MS_TO_NS(100)));
 
 }
