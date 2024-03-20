@@ -3,8 +3,7 @@
 #include <Wire.h>
 #include <Adafruit_MPU6050.h>
 #include <Adafruit_Sensor.h>
-#include <string.h>
-
+#include <TFLI2C.h>
 
 #include <rcl/rcl.h>
 #include <rclc/rclc.h>
@@ -22,11 +21,21 @@
 
 #if !defined(MICRO_ROS_TRANSPORT_ARDUINO_SERIAL)
 #endif
-
-#define en 4
-const int jPulse = 2;
+// Define pins for LSA08 connection 
+#define en 4          
+const int jPulse = 2; // Hardware interrupt pin Due
 int nodeCount = 0;
 byte read=0;
+
+extern TwoWire Wire1;
+TFLI2C tflI2C;   // create object for tfluna library
+int16_t  tfDist_1;   // distance in centimeters
+int16_t  tfDist_2;  
+int16_t  tfDist_3;   
+int16_t  tfAddr1 = 0x11;  // Use this default I2C address
+int16_t  tfAddr2 = 0x12;
+int16_t  tfAddr3 = 0x13;
+
 
 // declaring motor pwm variables (these are used for sending pwm signals to motor driver)
 int FL_motor;
@@ -43,15 +52,12 @@ int BR_motor;
 #define dirFR 31
 #define dirBL 27
 #define dirBR 33
-
+// declarings pins for lift and claw 
 #define pwmPin1 13
 #define dir1 3
-// #define pwmPin2 10
-// #define dir2 31
-// #define pwmPin3 8
-// #define dir3 27
-// #define pwmPin4 11
-// #define dir4 33
+#define pwmPin2 10
+#define dir2 31
+
 
 rcl_publisher_t publisher_imu;
 rcl_publisher_t publisher_line;
@@ -60,7 +66,7 @@ rcl_publisher_t publisher_junction;
 
 std_msgs__msg__Int8 junc;
 std_msgs__msg__Int32 lsa08; 
-std_msgs__msg__Int32MultiArray msg_lsa08;        
+std_msgs__msg__Int32MultiArray msg_luna;        
 sensor_msgs__msg__Imu imu_msg;
 
 rcl_subscription_t subscriber;       
@@ -78,10 +84,14 @@ rcl_timer_t timer_luna;
 rcl_timer_t timer_junc;
 
 rcl_service_t service;
+rcl_service_t service1;
 rcl_wait_set_t wait_set;
 
 std_srvs__srv__SetBool_Response req;
 std_srvs__srv__SetBool_Response res;
+
+std_srvs__srv__SetBool_Response req1;
+std_srvs__srv__SetBool_Response res1;
 
 Adafruit_MPU6050 mpu;
 
@@ -110,12 +120,9 @@ void pinSetup()
 
   pinMode(dir1, OUTPUT);
   pinMode(pwmPin1, OUTPUT);
-  // pinMode(dir2, OUTPUT);
-  // pinMode(pwmPin2, OUTPUT);
-  // pinMode(dir3, OUTPUT);
-  // pinMode(pwmPin3, OUTPUT);
-  // pinMode(dir4, OUTPUT);
-  // pinMode(pwmPin4, OUTPUT);
+  pinMode(dir2, OUTPUT);
+  pinMode(pwmPin2, OUTPUT);
+ 
 
 }
 // Error handle loop
@@ -124,39 +131,43 @@ void error_loop() {
     delay(100);
   }
 }
+
 void rotate_clockwise(bool &success)
 {
   digitalWrite(dir1, HIGH);
-  // digitalWrite(dir2, HIGH);
-  // digitalWrite(dir3, HIGH);
-  // digitalWrite(dir4, HIGH);
   analogWrite(pwmPin1, 255);
-  // analogWrite(pwmPin2, 255);
-  // analogWrite(pwmPin3, 255);
-  // analogWrite(pwmPin4, 255);
   delay(3000);
   analogWrite(pwmPin1, 0);
-  // analogWrite(pwmPin2, 0);
-  // analogWrite(pwmPin3, 0);
-  // analogWrite(pwmPin4, 0);
+
   success = true;
 }
-
 void rotate_anticlockwise(bool &success)
 {
   digitalWrite(dir1, LOW);
-  // digitalWrite(dir2, LOW);
-  // digitalWrite(dir3, LOW);
-  // digitalWrite(dir4, LOW);
   analogWrite(pwmPin1, 255);
-  // analogWrite(pwmPin2, 255);
-  // analogWrite(pwmPin3, 255);
-  // analogWrite(pwmPin4, 255);
   delay(3000);
   analogWrite(pwmPin1, 0);
-  // analogWrite(pwmPin2, 0);
-  // analogWrite(pwmPin3, 0);
-  // analogWrite(pwmPin4, 0);
+  
+  success = true;
+}
+
+void rotate_clockwise_claw(bool &success)
+{
+ 
+  digitalWrite(dir2, HIGH);
+  analogWrite(pwmPin2, 255);
+  delay(3000);
+  analogWrite(pwmPin1, 0);
+  analogWrite(pwmPin2, 0);
+  success = true;
+}
+void rotate_anticlockwise_claw(bool &success)
+{
+
+  digitalWrite(dir2, LOW);
+  analogWrite(pwmPin2, 255);
+  delay(3000);
+  analogWrite(pwmPin1, 0);
   success = true;
 }
 
@@ -172,16 +183,20 @@ void timer_callback_junc(rcl_timer_t * timer, int64_t last_call_time)
       
   }
 }
+
 void timer_callback(rcl_timer_t * timer, int64_t last_call_time) {
   RCLC_UNUSED(last_call_time);
      
       Serial1.begin(115200);
       digitalWrite(en,LOW);
-      while(Serial1.available()<=0);
+      if(Serial1.available()<=0)
+      {
       read=Serial1.read();
       // Serial.println(read);
       lsa08.data=read;
       digitalWrite(en,HIGH);
+      }
+
       if (timer!= NULL){
 
        RCSOFTCHECK(rcl_publish(&publisher_line, &lsa08, NULL));
@@ -200,18 +215,18 @@ void timer_callback_imu(rcl_timer_t * timer, int64_t last_call_time) {
   //   }
   // }
      
-    mpu.begin();
+   // mpu.begin();
     
-    sensors_event_t a, g, temp;
-    mpu.getEvent(&a, &g, &temp);
+    // sensors_event_t a, g, temp;
+    // mpu.getEvent(&a, &g, &temp);
 
-    imu_msg.linear_acceleration.x = a.acceleration.x;
-    imu_msg.linear_acceleration.y = a.acceleration.y;
-    imu_msg.linear_acceleration.z = a.acceleration.z;
+    // imu_msg.linear_acceleration.x = a.acceleration.x;
+    // imu_msg.linear_acceleration.y = a.acceleration.y;
+    // imu_msg.linear_acceleration.z = a.acceleration.z;
 
-    imu_msg.angular_velocity.x = g.gyro.x;
-    imu_msg.angular_velocity.y = g.gyro.y;
-    imu_msg.angular_velocity.z = g.gyro.z;
+    // imu_msg.angular_velocity.x = g.gyro.x;
+    // imu_msg.angular_velocity.y = g.gyro.y;
+    // imu_msg.angular_velocity.z = g.gyro.z;
     
       if (timer != NULL) {
      
@@ -224,25 +239,34 @@ void timer_callback_multiarray(rcl_timer_t * timer, int64_t last_call_time)
 {  
   RCLC_UNUSED(last_call_time);
 
-   // Clear previous data
-   msg_lsa08.data.size = 0;
-   msg_lsa08.data.capacity = 0;
-   msg_lsa08.data.data = NULL;
+    Wire1.begin(); 
+    // Clear previous data
+   msg_luna.data.size = 3;
+   msg_luna.data.capacity = 3;
+   msg_luna.data.data = NULL;
     
-    // Add new data
-    msg_lsa08.data.data = (int32_t*)malloc(sizeof(int32_t) * 3); // Assuming you want to publish 3 values
-    if  (msg_lsa08.data.data != NULL) {
-     msg_lsa08.data.size = 3;
-     msg_lsa08.data.capacity = 3;
-     msg_lsa08.data.data[0] = 1; // Example value
-     msg_lsa08.data.data[1] = 2; // Example value
-     msg_lsa08.data.data[2] = 3; // Example value
-
+   // Add new data
+    msg_luna.data.data = (int32_t*)malloc(sizeof(int32_t) * 3); // Assuming you want to publish 3 values
+    if  (msg_luna.data.data != NULL) {
+     msg_luna.data.size = 3;
+     msg_luna.data.capacity = 3;
+    if(tflI2C.getData(tfDist_1, tfAddr1)){
+        msg_luna.data.data[0] = tfDist_1; 
+    }
+    if(tflI2C.getData(tfDist_2, tfAddr2)){
+       msg_luna.data.data[1] = tfDist_2; 
+    }
+        if(tflI2C.getData(tfDist_3, tfAddr3)){
+       msg_luna.data.data[2] = tfDist_3; 
+    }
+    
+    delay(50);
+    }
   if (timer != NULL) {
       // Publish the message
-      RCSOFTCHECK(rcl_publish(&publisher_luna, &msg_lsa08, NULL));
+      RCSOFTCHECK(rcl_publish(&publisher_luna, &msg_luna, NULL));
     }
-  }
+ // }
 }
 
 void subscription_callback(const void *msgin) {
@@ -254,7 +278,7 @@ void subscription_callback(const void *msgin) {
 
   float mapped_leftHatx =  (127.0/2.0)*x1;
   float mapped_leftHaty = (127.0/2.0)* y1;
-  float mapped_rightHatz = (95.0/2.0)* z1;
+  float mapped_rightHatz = (95.0/1.0)* z1;
 
     FL_motor = mapped_leftHatx - mapped_rightHatz + mapped_leftHaty;
     BR_motor = mapped_leftHatx + mapped_rightHatz + mapped_leftHaty;
@@ -323,6 +347,7 @@ void subscription_callback(const void *msgin) {
     analogWrite(mPinBR,BR_motor);
 
 }
+
 void service_callback(const void * req, void * res){
   
   
@@ -331,6 +356,35 @@ void service_callback(const void * req, void * res){
 
   //printf("Service request value: %d + %d.\n", (int) req_in->a, (int) req_in->b);
 //  String response_str = "f1";
+  bool success = false;
+
+  if(req_in->data == 1)
+  {
+//    res_in->success = true;
+//    res_in->message = response_str;
+
+      rotate_clockwise(success);
+      res_in->success = success;
+    
+  }
+
+  else
+  {
+//    res_in->success = true;
+//    res_in->message = "f0";
+
+      rotate_anticlockwise(success);
+      res_in->success = success;
+  }
+
+}
+
+void service_callback1(const void * req1, void * res1){
+  
+  
+  std_srvs__srv__SetBool_Request * req_in=(std_srvs__srv__SetBool_Request *) req1;
+  std_srvs__srv__SetBool_Response * res_in=(std_srvs__srv__SetBool_Response *) res1;
+
   bool success = false;
 
   if(req_in->data == 1)
@@ -363,6 +417,7 @@ void setup() {
   delay(1000);
   
   Serial.begin(115200);
+   
   
  // Try to initialize!
 
@@ -374,12 +429,19 @@ void setup() {
   // create node 
   RCCHECK(rclc_node_init_default(&node, "r2_vrc", "", &support));
 
-    // create service
+    // create service for lift
    RCCHECK(rclc_service_init_default(
     &service, 
     &node, 
     ROSIDL_GET_SRV_TYPE_SUPPORT(std_srvs, srv, SetBool), 
-    "/setbool"));
+    "/service_lift"));
+
+     //create service for claw
+    RCCHECK(rclc_service_init_default(
+    &service1, 
+    &node, 
+    ROSIDL_GET_SRV_TYPE_SUPPORT(std_srvs, srv, SetBool), 
+    "/service_claw"));
   
   // create publisher for junction
     RCCHECK(rclc_publisher_init_default(
@@ -443,7 +505,7 @@ void setup() {
     RCL_MS_TO_NS(timer_timeout),
     timer_callback));
 
- // create timer for mpu6050,
+ // create timer for mpu6050,2
   const unsigned int timer_timeout_imu = 500;
   RCCHECK(rclc_timer_init_default(
     &timer_imu,
@@ -453,7 +515,7 @@ void setup() {
 
   // create executor
   
-  RCCHECK(rclc_executor_init(&executor, &support.context, 6, &allocator));
+  RCCHECK(rclc_executor_init(&executor, &support.context, 7, &allocator));
   RCCHECK(rclc_executor_add_timer(&executor, &timer_line));
   RCCHECK(rclc_executor_add_timer(&executor, &timer_imu));
   RCCHECK(rclc_executor_add_timer(&executor, &timer_junc));
@@ -462,10 +524,11 @@ void setup() {
   RCCHECK(rclc_executor_add_subscription(&executor, &subscriber, &sub_msg, &subscription_callback, ON_NEW_DATA));
 
   RCCHECK(rclc_executor_add_service(&executor, &service, &req, &res, service_callback));
+  RCCHECK(rclc_executor_add_service(&executor, &service1, &req1, &res1, service_callback1));
 
-  mpu.setAccelerometerRange(MPU6050_RANGE_16_G);
-  mpu.setGyroRange(MPU6050_RANGE_250_DEG);
-  mpu.setFilterBandwidth(MPU6050_BAND_21_HZ);
+  // mpu.setAccelerometerRange(MPU6050_RANGE_16_G);
+  // mpu.setGyroRange(MPU6050_RANGE_250_DEG);
+  // mpu.setFilterBandwidth(MPU6050_BAND_21_HZ);
 
  delay(100);
   
